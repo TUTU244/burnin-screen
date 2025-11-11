@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Burn-in Care Screen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <!-- iOSホーム画面追加でフルスクリーン化 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: #050505;
+      cursor: none;
+      font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      color: #ddd;
+      touch-action: none;
+    }
+
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      font-size: 10px;
+      background: rgba(0,0,0,0.7);
+      border-radius: 16px;
+      opacity: 0.95;
+      transition: opacity 0.8s;
+      z-index: 2000;
+    }
+    #hint.hidden { opacity: 0; }
+
+    .ball {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      mix-blend-mode: screen;
+      pointer-events: none;
+      transition: background 0.4s ease;
+    }
+
+    .scan-bar {
+      position: absolute;
+      left: -10%;
+      width: 120%;
+      mix-blend-mode: screen;
+      opacity: 0.4;
+      pointer-events: none;
+      transition: background 0.6s linear;
+    }
+
+    .particle {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.6);
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .grid-line {
+      position: absolute;
+      background: rgba(255,255,255,0.06);
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    .aurora {
+      position: absolute;
+      width: 140%;
+      height: 40%;
+      left: -20%;
+      mix-blend-mode: screen;
+      pointer-events: none;
+      opacity: 0.35;
+      transition: background 1s linear;
+    }
+
+    .puddle,
+    .center-ripple {
+      position: absolute;
+      border-radius: 50%;
+      border: 2px solid hsla(200,100%,80%,0.55);
+      mix-blend-mode: screen;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .center-ripple {
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+  </style>
+</head>
+<body>
+  <div id="hint">
+    タップでパターン切替（1〜9）／自動切替あり。全画面が常にゆっくり変化する焼き付き対策スクリーン。
+  </div>
+
+  <script>
+    // ===== 共通ユーティリティ =====
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+
+    function rand(min, max){ return Math.random() * (max - min) + min; }
+    function randInt(min, max){ return Math.floor(rand(min, max + 1)); }
+    function randomHue(){ return randInt(0, 359); }
+
+    function randomGlowGradient(){
+      return 'radial-gradient(circle at 30% 30%,' +
+        'rgba(255,255,255,0.95),' +
+        'hsla(' + randomHue() + ',100%,65%,1),' +
+        'rgba(0,0,0,0))';
+    }
+
+    function randomScanGradient(){
+      var h = randomHue();
+      var alpha = 0.2;
+      return 'linear-gradient(to bottom,' +
+        'rgba(0,0,0,0),' +
+        'hsla(' + h + ',90%,65%,' + alpha + '),' +
+        'rgba(0,0,0,0))';
+    }
+
+    function randomAuroraGradient(){
+      var h1 = randomHue();
+      var h2 = (h1 + randInt(40,120)) % 360;
+      return 'linear-gradient(to right,' +
+        'hsla(' + h1 + ',90%,65%,0),' +
+        'hsla(' + h1 + ',90%,65%,0.4),' +
+        'hsla(' + h2 + ',90%,65%,0.12),' +
+        'hsla(' + h2 + ',90%,65%,0))';
+    }
+
+    // ===== グローバル背景（常に全画面で動く） =====
+    var bgPhase = 0;
+    function initGlobalBackground(){
+      document.body.style.backgroundImage =
+        'linear-gradient(135deg,' +
+        'hsla(220,80%,8%,1),' +
+        'hsla(280,70%,8%,1),' +
+        'hsla(340,70%,10%,1))';
+      document.body.style.backgroundSize = '260% 260%';
+      document.body.style.backgroundRepeat = 'no-repeat';
+      document.body.style.backgroundPosition = '50% 50%';
+    }
+    function stepGlobalBackground(){
+      bgPhase += 0.0009;
+      var x = (Math.sin(bgPhase) * 50) + 50;
+      var y = (Math.cos(bgPhase * 0.7) * 50) + 50;
+      document.body.style.backgroundPosition = x + '% ' + y + '%';
+    }
+
+    // ===== 状態 =====
+    var currentMode = 1;
+    var MAX_MODE = 9;
+
+    var balls = [];
+    var scanBars = [];
+    var particles = [];
+    var gridLines = [];
+    var auroras = [];
+    var puddles = [];
+    var centerRipples = [];
+
+    var intervalIds = [];
+    var autoModeTimerId = null;
+
+    function addInterval(fn, ms){
+      var id = setInterval(fn, ms);
+      intervalIds.push(id);
+      return id;
+    }
+
+    function clearAllIntervals(){
+      for (var i=0; i<intervalIds.length; i++) clearInterval(intervalIds[i]);
+      intervalIds = [];
+      if (autoModeTimerId){
+        clearInterval(autoModeTimerId);
+        autoModeTimerId = null;
+      }
+    }
+
+    function clearArray(arr){
+      for (var i=0; i<arr.length; i++){
+        var o = arr[i];
+        if (o && o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+      }
+      arr.length = 0;
+    }
+
+    function clearAllElements(){
+      clearArray(balls);
+      clearArray(scanBars);
+      clearArray(particles);
+      clearArray(gridLines);
+      clearArray(auroras);
+      clearArray(puddles);
+      clearArray(centerRipples);
+    }
+
+    function clearAll(){
+      clearAllIntervals();
+      clearAllElements();
+    }
+
+    // リサイズ時は現在モードを作り直して全画面にフィット
+    window.addEventListener('resize', function(){
+      vw = window.innerWidth;
+      vh = window.innerHeight;
+      var m = currentMode || 1;
+      clearAll();
+      setMode(m);
+    });
+
+    // ===== Mode1: バウンドボール =====
+    var BALL_RADIUS = 24;
+    var BALL_MIN = 1;
+    var BALL_MAX = 10;
+    var BALL_SPEED_MIN = 1.5;
+    var BALL_SPEED_MAX = 4.0;
+    var BALL_COUNT_INTERVAL = 6000;
+    var ballCount = BALL_MIN;
+
+    function createBall(){
+      var el = document.createElement('div');
+      el.className = 'ball';
+      el.style.background = randomGlowGradient();
+
+      var cx = rand(BALL_RADIUS, vw - BALL_RADIUS);
+      var cy = rand(BALL_RADIUS, vh - BALL_RADIUS);
+      var angle = rand(0, Math.PI * 2);
+      var speed = rand(BALL_SPEED_MIN, BALL_SPEED_MAX);
+      if (Math.abs(Math.cos(angle)) < 0.05) angle += 0.2;
+      if (Math.abs(Math.sin(angle)) < 0.05) angle += 0.2;
+      var vx = Math.cos(angle) * speed;
+      var vy = Math.sin(angle) * speed;
+
+      var ball = { el: el, cx: cx, cy: cy, vx: vx, vy: vy };
+      positionBall(ball);
+      document.body.appendChild(el);
+      balls.push(ball);
+    }
+
+    function positionBall(b){
+      b.el.style.transform =
+        'translate(' + (b.cx - BALL_RADIUS) + 'px,' + (b.cy - BALL_RADIUS) + 'px)';
+    }
+
+    function syncBallCount(target){
+      target = Math.max(BALL_MIN, Math.min(BALL_MAX, target));
+      while (balls.length < target) createBall();
+      while (balls.length > target){
+        var b = balls.pop();
+        if (b && b.el && b.el.parentNode) b.el.parentNode.removeChild(b.el);
+      }
+    }
+
+    function stepBalls(){
+      if (!balls.length) return;
+      var minX = BALL_RADIUS, maxX = vw - BALL_RADIUS;
+      var minY = BALL_RADIUS, maxY = vh - BALL_RADIUS;
+
+      for (var i=0; i<balls.length; i++){
+        var b = balls[i];
+        b.cx += b.vx;
+        b.cy += b.vy;
+        var bounced = false;
+
+        if (b.cx <= minX){ b.cx = minX; b.vx = Math.abs(b.vx); bounced = true; }
+        else if (b.cx >= maxX){ b.cx = maxX; b.vx = -Math.abs(b.vx); bounced = true; }
+
+        if (b.cy <= minY){ b.cy = minY; b.vy = Math.abs(b.vy); bounced = true; }
+        else if (b.cy >= maxY){ b.cy = maxY; b.vy = -Math.abs(b.vy); bounced = true; }
+
+        if (bounced){
+          var tweak = rand(-0.25, 0.25);
+          var sp = Math.hypot(b.vx, b.vy) || rand(BALL_SPEED_MIN, BALL_SPEED_MAX);
+          var ang = Math.atan2(b.vy, b.vx) + tweak;
+          b.vx = Math.cos(ang) * sp;
+          b.vy = Math.sin(ang) * sp;
+          if (Math.random() < 0.6)
+            b.el.style.background = randomGlowGradient();
+        }
+        positionBall(b);
+      }
+    }
+
+    function initMode1(){
+      ballCount = BALL_MIN;
+      syncBallCount(ballCount);
+      addInterval(function(){
+        ballCount++;
+        if (ballCount > BALL_MAX) ballCount = BALL_MIN;
+        syncBallCount(ballCount);
+      }, BALL_COUNT_INTERVAL);
+    }
+
+    // ===== Mode2: スキャンバー =====
+    var BAR_MIN = 1;
+    var BAR_MAX = 8;
+    var BAR_COUNT_INTERVAL = 7000;
+    var BAR_SPEED_MIN = 0.3;
+    var BAR_SPEED_MAX = 1.2;
+    var BAR_HEIGHT_RATIO = 0.16;
+
+    function createScanBar(){
+      var el = document.createElement('div');
+      el.className = 'scan-bar';
+      var h = vh * BAR_HEIGHT_RATIO;
+      el.style.height = h + 'px';
+      el.style.background = randomScanGradient();
+
+      var y = rand(-h, vh);
+      var vy = (Math.random() > 0.5 ? 1 : -1) * rand(BAR_SPEED_MIN, BAR_SPEED_MAX);
+      var bar = { el: el, y: y, vy: vy, h: h };
+      el.style.top = y + 'px';
+      document.body.appendChild(el);
+      scanBars.push(bar);
+    }
+
+    function syncScanBarCount(target){
+      target = Math.max(BAR_MIN, Math.min(BAR_MAX, target));
+      while (scanBars.length < target) createScanBar();
+      while (scanBars.length > target){
+        var b = scanBars.pop();
+        if (b && b.el && b.el.parentNode) b.el.parentNode.removeChild(b.el);
+      }
+    }
+
+    function stepScanBars(){
+      if (!scanBars.length) return;
+      var minY = -40;
+      var maxY = vh + 40;
+
+      for (var i=0; i<scanBars.length; i++){
+        var b = scanBars[i];
+        b.y += b.vy;
+        var bounced = false;
+
+        if (b.y <= minY){ b.y = minY; b.vy = Math.abs(b.vy); bounced = true; }
+        else if (b.y + b.h >= maxY){ b.y = maxY - b.h; b.vy = -Math.abs(b.vy); bounced = true; }
+
+        if (bounced){
+          if (Math.random() < 0.7)
+            b.el.style.background = randomScanGradient();
+          var sp = rand(BAR_SPEED_MIN, BAR_SPEED_MAX);
+          b.vy = (b.vy > 0 ? 1 : -1) * sp;
+        }
+        b.el.style.top = b.y + 'px';
+      }
+    }
+
+    function initMode2(){
+      var count = BAR_MIN;
+      var increasing = true;
+      syncScanBarCount(count);
+      addInterval(function(){
+        if (increasing){
+          count++;
+          if (count >= BAR_MAX){ count = BAR_MAX; increasing = false; }
+        } else {
+          count--;
+          if (count <= BAR_MIN){ count = BAR_MIN; increasing = true; }
+        }
+        syncScanBarCount(count);
+      }, BAR_COUNT_INTERVAL);
+    }
+
+    // ===== Mode3: 粒子 =====
+    function initMode3(){
+      var NUM = 120;
+      for (var i=0; i<NUM; i++){
+        var el = document.createElement('div');
+        el.className = 'particle';
+        var x = rand(0, vw);
+        var y = rand(0, vh);
+        var vx = rand(-0.35, 0.35);
+        var vy = rand(-0.2, 0.2);
+        el.style.left = x + 'px';
+        el.style.top  = y + 'px';
+        el.style.background =
+          'hsla(' + randomHue() + ',100%,70%,0.7)';
+        document.body.appendChild(el);
+        particles.push({ el: el, x: x, y: y, vx: vx, vy: vy });
+      }
+      addInterval(function(){
+        for (var i=0; i<particles.length; i++){
+          if (Math.random() < 0.08){
+            particles[i].el.style.background =
+              'hsla(' + randomHue() + ',100%,70%,0.7)';
+          }
+        }
+      }, 3000);
+    }
+
+    function stepParticles(){
+      if (!particles.length) return;
+      for (var i=0; i<particles.length; i++){
+        var p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < -10) p.x = vw + 5;
+        if (p.x > vw + 10) p.x = -5;
+        if (p.y < -10) p.y = vh + 5;
+        if (p.y > vh + 10) p.y = -5;
+        p.el.style.left = p.x + 'px';
+        p.el.style.top  = p.y + 'px';
+      }
+    }
+
+    // ===== Mode4: グリッド =====
+    var gridPhase = 0;
+    function initMode4(){
+      var cols = 10;
+      var rows = 6;
+      for (var c=0; c<=cols; c++){
+        var el = document.createElement('div');
+        el.className = 'grid-line';
+        el.style.width = '1px';
+        el.style.height = '100%';
+        el.style.left = (vw/cols * c) + 'px';
+        el.style.top = '0px';
+        document.body.appendChild(el);
+        gridLines.push({ el: el, vertical: true, index: c });
+      }
+      for (var r=0; r<=rows; r++){
+        var el2 = document.createElement('div');
+        el2.className = 'grid-line';
+        el2.style.height = '1px';
+        el2.style.width = '100%';
+        el2.style.top = (vh/rows * r) + 'px';
+        el2.style.left = '0px';
+        document.body.appendChild(el2);
+        gridLines.push({ el: el2, vertical: false, index: r });
+      }
+    }
+
+    function stepGrid(){
+      if (!gridLines.length) return;
+      gridPhase += 0.01;
+      var amp = 8;
+      for (var i=0; i<gridLines.length; i++){
+        var g = gridLines[i];
+        if (g.vertical){
+          var baseX = vw/10 * g.index;
+          var offX  = Math.sin(gridPhase + g.index*0.5) * amp;
+          g.el.style.left = (baseX + offX) + 'px';
+        } else {
+          var baseY = vh/6 * g.index;
+          var offY  = Math.cos(gridPhase + g.index*0.5) * amp;
+          g.el.style.top = (baseY + offY) + 'px';
+        }
+      }
+    }
+
+    // ===== Mode5: 背景強調 =====
+    function initMode5(){}
+    function stepWave(){}
+
+    // ===== Mode6: オーロラ =====
+    function initMode6(){
+      for (var i=0; i<3; i++){
+        var el = document.createElement('div');
+        el.className = 'aurora';
+        el.style.top = (15 + 20*i) + '%';
+        el.style.background = randomAuroraGradient();
+        document.body.appendChild(el);
+        var speed = rand(0.1, 0.35) * (Math.random()>0.5 ? 1 : -1);
+        auroras.push({ el: el, x: 0, speed: speed });
+      }
+      addInterval(function(){
+        for (var j=0; j<auroras.length; j++){
+          if (Math.random() < 0.6)
+            auroras[j].el.style.background = randomAuroraGradient();
+        }
+      }, 5000);
+    }
+
+    function stepAurora(){
+      if (!auroras.length) return;
+      for (var i=0; i<auroras.length; i++){
+        var a = auroras[i];
+        a.x += a.speed;
+        if (a.x > 40) a.x = -40;
+        if (a.x < -40) a.x = 40;
+        a.el.style.transform = 'translateX(' + a.x + '%)';
+      }
+    }
+
+    // ===== Mode7: 中心から外側へ大波紋 =====
+    function spawnCenterRipple(){
+      var el = document.createElement('div');
+      el.className = 'center-ripple';
+
+      var maxSize = Math.sqrt(vw*vw + vh*vh) * 1.2; // 対角線超えまで
+      var minSize = maxSize * 0.06;
+
+      el.style.width  = minSize + 'px';
+      el.style.height = minSize + 'px';
+      el.style.borderColor =
+        'hsla(' + randomHue() + ',90%,75%,0.8)';
+      el.style.opacity = '0.9';
+
+      document.body.appendChild(el);
+
+      centerRipples.push({
+        el: el,
+        life: 0,
+        maxLife: 260,
+        minSize: minSize,
+        maxSize: maxSize
+      });
+    }
+
+    function initMode7(){
+      spawnCenterRipple();
+      addInterval(spawnCenterRipple, 1000);
+    }
+
+    function stepCenterRipple(){
+      if (!centerRipples.length) return;
+      for (var i=centerRipples.length-1; i>=0; i--){
+        var r = centerRipples[i];
+        r.life += 2.2;
+        var t = r.life / r.maxLife;
+        if (t >= 1){
+          if (r.el.parentNode) r.el.parentNode.removeChild(r.el);
+          centerRipples.splice(i, 1);
+          continue;
+        }
+        var size = r.minSize + (r.maxSize - r.minSize) * t;
+        var opacity = 0.9 * (1 - t);
+        var bw = 2 - t * 1.5;
+        r.el.style.width  = size + 'px';
+        r.el.style.height = size + 'px';
+        r.el.style.marginLeft = (-size/2) + 'px';
+        r.el.style.marginTop  = (-size/2) + 'px';
+        r.el.style.opacity    = String(Math.max(0, opacity));
+        r.el.style.borderWidth= String(Math.max(0.2, bw)) + 'px';
+      }
+    }
+
+    // ===== Mode8: ランダム水たまり波紋 =====
+    function spawnPuddle(){
+      var el = document.createElement('div');
+      el.className = 'puddle';
+
+      var maxSize = Math.min(vw, vh) * rand(0.08, 0.25);
+      var minSize = maxSize * 0.2;
+      var cx = rand(0.05*vw, 0.95*vw);
+      var cy = rand(0.05*vh, 0.95*vh);
+
+      el.style.width  = minSize + 'px';
+      el.style.height = minSize + 'px';
+      el.style.left   = (cx - minSize/2) + 'px';
+      el.style.top    = (cy - minSize/2) + 'px';
+      el.style.borderColor =
+        'hsla(' + randomHue() + ',85%,75%,0.8)';
+      el.style.opacity = '0';
+
+      document.body.appendChild(el);
+
+      puddles.push({
+        el: el,
+        life: 0,
+        maxLife: rand(120,260),
+        minSize: minSize,
+        maxSize: maxSize,
+        cx: cx,
+        cy: cy
+      });
+    }
+
+    function initMode8(){
+      addInterval(spawnPuddle, 600);
+    }
+
+    function stepPuddles(){
+      if (!puddles.length) return;
+      for (var i=puddles.length-1; i>=0; i--){
+        var p = puddles[i];
+        p.life += 1.8;
+        var t = p.life / p.maxLife;
+        if (t >= 1){
+          if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
+          puddles.splice(i,1);
+          continue;
+        }
+        var size = p.minSize + (p.maxSize - p.minSize) * t;
+        var opacity = (t < 0.3)
+          ? (t/0.3) * 0.8
+          : 0.8 * (1 - (t-0.3)/0.7);
+        p.el.style.width  = size + 'px';
+        p.el.style.height = size + 'px';
+        p.el.style.left   = (p.cx - size/2) + 'px';
+        p.el.style.top    = (p.cy - size/2) + 'px';
+        p.el.style.opacity= String(Math.max(0, opacity));
+      }
+    }
+
+    // ===== Mode9: ハイブリッド =====
+    function initMode9(){
+      ballCount = 4;
+      syncBallCount(ballCount);
+      for (var i=0; i<3; i++) createScanBar();
+      addInterval(function(){
+        balls.forEach(function(b){
+          if (Math.random() < 0.15)
+            b.el.style.background = randomGlowGradient();
+        });
+        scanBars.forEach(function(b){
+          if (Math.random() < 0.15)
+            b.el.style.background = randomScanGradient();
+        });
+      }, 4000);
+    }
+
+    // ===== モード切替 =====
+    function setMode(m){
+      clearAll();
+      currentMode = m;
+      if      (m === 1) initMode1();
+      else if (m === 2) initMode2();
+      else if (m === 3) initMode3();
+      else if (m === 4) initMode4();
+      else if (m === 5) initMode5();
+      else if (m === 6) initMode6();
+      else if (m === 7) initMode7();
+      else if (m === 8) initMode8();
+      else if (m === 9) initMode9();
+    }
+
+    document.addEventListener('click', function(){
+      var next = (currentMode >= MAX_MODE) ? 1 : currentMode + 1;
+      setMode(next);
+    });
+
+    // ===== 自動モード切替 =====
+    function startAutoModeCycle(){
+      autoModeTimerId = setInterval(function(){
+        var next = (currentMode >= MAX_MODE) ? 1 : currentMode + 1;
+        setMode(next);
+      }, 45000);
+    }
+
+    // ===== メインループ =====
+    function animate(){
+      stepGlobalBackground();
+      if      (currentMode === 1) stepBalls();
+      else if (currentMode === 2) stepScanBars();
+      else if (currentMode === 3) stepParticles();
+      else if (currentMode === 4) stepGrid();
+      else if (currentMode === 5) stepWave();
+      else if (currentMode === 6) stepAurora();
+      else if (currentMode === 7) stepCenterRipple();
+      else if (currentMode === 8) stepPuddles();
+      else if (currentMode === 9){
+        stepBalls();
+        stepScanBars();
+      }
+      requestAnimationFrame(animate);
+    }
+
+    // ===== 初期化 =====
+    (function init(){
+      setTimeout(function(){
+        var h = document.getElementById('hint');
+        if (h) h.classList.add('hidden');
+      }, 9000);
+      initGlobalBackground();
+      setMode(1);
+      startAutoModeCycle();
+      animate();
+    })();
+  </script>
+</body>
+</html>
