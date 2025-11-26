@@ -1,4 +1,4 @@
-const html = `<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -178,13 +178,9 @@ function loop(){
   else if(mode===3) stepParticles();
   requestAnimationFrame(loop);
 }
-
 running=true;
 setMode(1);
 requestAnimationFrame(loop);
 </script>
 </body>
-</html>`;
-const w=new WebView();
-await w.loadHTML(html);
-await w.present();
+</html>
