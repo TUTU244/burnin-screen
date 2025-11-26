@@ -73,6 +73,7 @@ const html = `<!DOCTYPE html>
     function rand(min, max) { return Math.random() * (max - min) + min; }
     function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
     function randomHue() { return randInt(0, 359); }
+    function pad2(n){ return n < 10 ? "0" + n : "" + n; }
 
     const wrapper = document.getElementById('wrapper');
 
@@ -105,8 +106,8 @@ const html = `<!DOCTYPE html>
       clearWrapper();
       wrapper.style.display = "block";
 
-      const cols = Math.max(16, Math.floor(vw / 40));
-      const rows = Math.max(10, Math.floor(vh / 40));
+      const cols = Math.max(18, Math.floor(vw / 36));
+      const rows = Math.max(12, Math.floor(vh / 36));
       const tileW = vw / cols;
       const tileH = vh / rows;
 
@@ -124,12 +125,12 @@ const html = `<!DOCTYPE html>
 
           const hue = randomHue();
           const phase = Math.random() * Math.PI * 2;
-          const speed = rand(0.01, 0.03);             // ちょっと速く
+          const speed = rand(0.02, 0.05);             // 色変化速め
           const movePhaseX = Math.random() * Math.PI * 2;
           const movePhaseY = Math.random() * Math.PI * 2;
-          const moveSpeedX = rand(0.004, 0.01);
-          const moveSpeedY = rand(0.004, 0.01);
-          const amp = rand(2, 6);                     // 数pxゆらす
+          const moveSpeedX = rand(0.01, 0.03);
+          const moveSpeedY = rand(0.01, 0.03);
+          const amp = rand(4, 10);                    // 揺れ幅
 
           tiles.push({
             el, hue, phase, speed,
@@ -152,10 +153,11 @@ const html = `<!DOCTYPE html>
 
         // 色と明るさアニメーション
         t.phase += t.speed;
-        t.hue = (t.hue + 0.15) % 360;
+        t.hue = (t.hue + 0.6) % 360;
         const v = (Math.sin(t.phase) + 1) / 2;
-        const l = 8 + 18 * v;          // 暗め
-        const alpha = 0.03 + 0.12 * v; // 控えめ
+        const l = 8 + 24 * v;          // 8〜32%（暗め）
+        const alpha = 0.05 + 0.20 * v; // 0.05〜0.25
+
         t.el.style.backgroundColor =
           "hsla(" + t.hue + ",80%," + l + "%," + alpha + ")";
 
@@ -169,9 +171,9 @@ const html = `<!DOCTYPE html>
       }
 
       // 全体ドリフト
-      globalPhase += 0.0003;
-      const dx = Math.sin(globalPhase) * 4;
-      const dy = Math.cos(globalPhase * 1.1) * 4;
+      globalPhase += 0.0006;
+      const dx = Math.sin(globalPhase) * 6;
+      const dy = Math.cos(globalPhase * 1.2) * 6;
       wrapper.style.transform = "translate(" + dx + "px," + dy + "px)";
     }
 
@@ -240,8 +242,6 @@ const html = `<!DOCTYPE html>
       }
     }
 
-    function pad2(n){ return n < 10 ? "0" + n : "" + n; }
-
     function updateClockText(force) {
       if (!clockEl || !clockState) return;
       const now = new Date();
@@ -293,7 +293,6 @@ const html = `<!DOCTYPE html>
       initParticlesAndClock();
     }
 
-    // --- モード切替 ---
     function setMode(m) {
       mode = m;
       if (mode === 1) initMode1();
